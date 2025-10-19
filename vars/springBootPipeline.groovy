@@ -106,8 +106,6 @@ def call(Map config) {
 Please create a captain-definition file in your repository.
 """
                         }
-
-                        sh 'cat captain-definition'
                         echo "✅ Found captain-definition file"
                     }
                 }
@@ -143,6 +141,28 @@ Please create a captain-definition file in your repository.
                                 echo "   2. Build using your captain-definition"
                                 echo "   3. Create Docker image"
                                 echo "   4. Deploy the container"
+
+                                # Ensure we have the complete git repository with all branches
+                                echo "🔍 Configuring git repository..."
+                                git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
+                                git fetch --all --prune
+
+                                # Verify the branch exists
+                                if git show-ref --verify --quiet refs/remotes/origin/${gitBranch}; then
+                                    echo "✅ Branch ${gitBranch} found"
+
+                                    # Ensure we're on the correct branch
+                                    git checkout ${gitBranch} 2>/dev/null || git checkout -b ${gitBranch} origin/${gitBranch}
+                                    git pull origin ${gitBranch} || true
+                                else
+                                    echo "❌ Branch ${gitBranch} not found in repository"
+                                    echo "Available branches:"
+                                    git branch -r
+                                    exit 1
+                                fi
+
+                                echo "📍 Current commit: \$(git rev-parse HEAD)"
+                                echo "📍 Current branch: \$(git rev-parse --abbrev-ref HEAD)"
 
                                 caprover deploy \
                                     -h ${caproverUrl} \
