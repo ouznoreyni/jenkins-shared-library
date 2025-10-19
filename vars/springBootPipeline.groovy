@@ -105,6 +105,9 @@ def call(Map config) {
                         ])
 
                         sh """
+                            # Fix git safe.directory issue when running in Docker container
+                            git config --global --add safe.directory \$(pwd)
+
                             git branch -a
                             git log --oneline -n 5
                             echo "✅ Git repository ready"
