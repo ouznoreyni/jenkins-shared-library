@@ -19,7 +19,7 @@
  *   - gitBranch: Branch to deploy from (default: env.GIT_BRANCH)
  *   - notificationEmails: Email list for notifications (default: env.NOTIFICATION_EMAILS)
  *   - fromEmail: Sender email (default: env.FROM_EMAIL)
- *   - dockerImage: Docker image for pipeline agent (default: 'ouznoreyni/docker-node-alpine-22-git:latest')
+ *   - dockerImage: Docker image for pipeline agent (default: 'ouznoreyni/node-git-alpine:latest')
  *   - pipelineTimeout: Pipeline timeout in minutes (default: 30)
  *
  * Example usage in Jenkinsfile:
@@ -41,7 +41,7 @@ def call(Map config) {
     def caproverPasswordId = config.caproverPasswordId ?: 'caprover-password'
     def notificationEmails = config.notificationEmails ?: env.NOTIFICATION_EMAILS
     def fromEmail = config.fromEmail ?: env.FROM_EMAIL ?: 'jenkins@noreyni.com'
-    def dockerImage = config.dockerImage ?: 'ouznoreyni/docker-node-alpine-22-git:latest'
+    def dockerImage = config.dockerImage ?: 'ouznoreyni/node-git-alpine:latest'
     def pipelineTimeout = config.pipelineTimeout ?: 30
 
     // Validate deployment credentials

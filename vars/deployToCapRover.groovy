@@ -13,7 +13,7 @@
  *   - caproverPassword: CapRover password (default: env.CAPROVER_PASSWORD)
  *   - notificationEmails: Semicolon-separated email list (default: env.NOTIFICATION_EMAILS)
  *   - fromEmail: Sender email address (default: env.FROM_EMAIL)
- *   - dockerImage: Docker image for pipeline agent (default: 'ouznoreyni/docker-node-alpine-22-git:latest')
+ *   - dockerImage: Docker image for pipeline agent (default: 'ouznoreyni/node-git-alpine:latest')
  *   - pipelineTimeout: Pipeline timeout in minutes (default: 30)
  *   - deploymentTimeout: Deployment timeout in seconds (default: 300)
  *   - additionalSetupSteps: Closure for additional setup steps (optional)
@@ -33,7 +33,7 @@ def call(Map config) {
     def caproverPasswordId = config.caproverPasswordId ?: 'caprover-password'
     def notificationEmails = config.notificationEmails ?: env.NOTIFICATION_EMAILS
     def fromEmail = config.fromEmail ?: env.FROM_EMAIL ?: 'jenkins@noreyni.com'
-    def dockerImage = config.dockerImage ?: 'ouznoreyni/docker-node-alpine-22-git:latest'
+    def dockerImage = config.dockerImage ?: 'ouznoreyni/node-git-alpine:latest'
     def pipelineTimeout = config.pipelineTimeout ?: 30
     def deploymentTimeout = config.deploymentTimeout ?: 300
 
