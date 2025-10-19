@@ -199,11 +199,7 @@ my-react-app/
   "dockerfilePath": "./.cicd/Dockerfile",
   "envVars": {
     "SPRING_PROFILES_ACTIVE": "prod",
-    "DB_HOST": "srv-captain--postgres",
-    "DB_PORT": "5432",
-    "DB_NAME": "mydb",
-    "DB_USERNAME": "user",
-    "DB_PASSWORD": "%%SECRET_DB_PASSWORD%%"
+    "DB_HOST": "srv-captain--postgres"
   },
   "containerHttpPort": "8080"
 }

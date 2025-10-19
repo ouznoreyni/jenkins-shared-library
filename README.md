@@ -277,7 +277,6 @@ In `captain-definition`, use `%%SECRET_NAME%%` for sensitive data:
 ```json
 {
   "envVars": {
-    "DB_PASSWORD": "%%SECRET_DB_PASSWORD%%",
     "JWT_SECRET": "%%SECRET_JWT_SECRET%%",
     "API_KEY": "%%SECRET_API_KEY%%"
   }
@@ -287,7 +286,7 @@ In `captain-definition`, use `%%SECRET_NAME%%` for sensitive data:
 Then set these in CapRover dashboard:
 ```
 Apps → Your App → App Configs → Environment Variables
-Add: SECRET_DB_PASSWORD, SECRET_JWT_SECRET, etc.
+Add: SECRET_JWT_SECRET, SECRET_API_KEY, etc.
 ```
 
 ### Jenkins Credentials
