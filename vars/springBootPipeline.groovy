@@ -134,11 +134,6 @@ Please create a captain-definition file in your repository.
                         echo "═══════════════════════════════════════════════════════"
 
                         withCredentials([string(credentialsId: caproverPasswordId, variable: 'CAPROVER_PASSWORD')]) {
-                            // Verify credential is not empty
-                            if (!env.CAPROVER_PASSWORD?.trim()) {
-                                error "❌ CAPROVER_PASSWORD credential is empty! Please check the credential value in Jenkins."
-                            }
-
                             sh """
                                 set +x  # Disable command echo for security
 
@@ -149,17 +144,11 @@ Please create a captain-definition file in your repository.
                                 echo "   3. Create Docker image"
                                 echo "   4. Deploy the container"
 
-                                # Verify password is available
-                                if [ -z "\$CAPROVER_PASSWORD" ]; then
-                                    echo "❌ ERROR: CAPROVER_PASSWORD is empty or not set!"
-                                    exit 1
-                                fi
-
                                 caprover deploy \
-                                    --host ${caproverUrl} \
-                                    --password "\$CAPROVER_PASSWORD" \
-                                    --branch ${gitBranch} \
-                                    --appName ${appName}
+                                    -h ${caproverUrl} \
+                                    -p \$CAPROVER_PASSWORD \
+                                    -b ${gitBranch} \
+                                    -a ${appName}
 
                                 DEPLOY_EXIT_CODE=\$?
 
