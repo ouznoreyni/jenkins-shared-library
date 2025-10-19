@@ -137,14 +137,28 @@ reactPipeline(
    - **Source Code Management**: Git
    - **Project Repository**: Your repository URL
 
-### 2. Configure Environment Variables
+### 2. Configure Jenkins Credentials
+
+**Add CapRover Password as Jenkins Credential:**
+
+1. Go to **Jenkins → Manage Jenkins → Credentials**
+2. Click on **(global)** domain
+3. Click **Add Credentials**
+4. Configure:
+   - **Kind**: Secret text
+   - **Scope**: Global
+   - **Secret**: your-caprover-password
+   - **ID**: `caprover-password`
+   - **Description**: CapRover Password
+5. Click **Create**
+
+### 3. Configure Environment Variables
 
 Go to **Jenkins → Manage Jenkins → Configure System → Global Properties → Environment Variables**
 
 Add:
 ```
 CAPROVER_URL=captain.your-domain.com
-CAPROVER_PASSWORD=your-caprover-password
 NOTIFICATION_EMAILS=team@example.com
 FROM_EMAIL=jenkins@example.com
 ```
@@ -162,7 +176,7 @@ springBootPipeline(
 
     // Optional
     caproverUrl: env.CAPROVER_URL,
-    caproverPassword: env.CAPROVER_PASSWORD,
+    caproverPasswordId: 'caprover-password',  // Jenkins credential ID
     gitBranch: env.GIT_BRANCH,
     notificationEmails: 'backend-team@company.com',
     fromEmail: 'jenkins@company.com',
@@ -181,7 +195,7 @@ reactPipeline(
 
     // Optional
     caproverUrl: env.CAPROVER_URL,
-    caproverPassword: env.CAPROVER_PASSWORD,
+    caproverPasswordId: 'caprover-password',  // Jenkins credential ID
     gitBranch: env.GIT_BRANCH,
     notificationEmails: 'frontend-team@company.com',
     fromEmail: 'jenkins@company.com',
@@ -289,14 +303,22 @@ Apps → Your App → App Configs → Environment Variables
 Add: SECRET_JWT_SECRET, SECRET_API_KEY, etc.
 ```
 
-### Jenkins Credentials
+### Jenkins Credentials for CapRover
 
-Instead of plain environment variables:
+The CapRover password is stored as a Jenkins credential for security:
 
 ```groovy
 springBootPipeline(
     applicationName: 'my-app',
-    caproverPassword: credentials('caprover-password-id')
+    caproverPasswordId: 'caprover-password'  // Default credential ID
+)
+```
+
+To use a different credential ID:
+```groovy
+springBootPipeline(
+    applicationName: 'my-app',
+    caproverPasswordId: 'my-custom-caprover-cred'
 )
 ```
 
@@ -337,8 +359,11 @@ git push
 
 ### "Missing required deployment credentials"
 ```
-Jenkins → Manage Jenkins → Configure System
-→ Environment Variables → Add CAPROVER_URL and CAPROVER_PASSWORD
+1. Add CapRover password credential:
+   Jenkins → Manage Jenkins → Credentials → Add credential with ID 'caprover-password'
+
+2. Add environment variable:
+   Jenkins → Manage Jenkins → Configure System → Environment Variables → Add CAPROVER_URL
 ```
 
 ### Dockerfile not found

@@ -30,7 +30,7 @@ def call(Map config) {
     def appName = config.applicationName
     def gitBranch = config.gitBranch ?: env.GIT_BRANCH ?: 'main'
     def caproverUrl = config.caproverUrl ?: env.CAPROVER_URL
-    def caproverPassword = config.caproverPassword ?: env.CAPROVER_PASSWORD
+    def caproverPasswordId = config.caproverPasswordId ?: 'caprover-password'
     def notificationEmails = config.notificationEmails ?: env.NOTIFICATION_EMAILS
     def fromEmail = config.fromEmail ?: env.FROM_EMAIL ?: 'jenkins@noreyni.com'
     def dockerImage = config.dockerImage ?: 'ouznoreyni/docker-node-alpine-22-git:latest'
@@ -38,8 +38,8 @@ def call(Map config) {
     def deploymentTimeout = config.deploymentTimeout ?: 300
 
     // Validate deployment credentials
-    if (!caproverUrl || !caproverPassword) {
-        error "❌ Missing required deployment credentials: CAPROVER_URL and CAPROVER_PASSWORD must be configured"
+    if (!caproverUrl) {
+        error "❌ Missing required deployment credential: CAPROVER_URL must be configured"
     }
 
     pipeline {
@@ -118,8 +118,8 @@ def call(Map config) {
                 steps {
                     echo "Preparing deployment for branch: ${gitBranch}"
                     script {
-                        if (!caproverUrl || !caproverPassword) {
-                            error "❌ Missing required deployment credentials"
+                        if (!caproverUrl) {
+                            error "❌ Missing required deployment credential: CAPROVER_URL"
                         }
                         echo "✅ Deployment credentials verified"
 
@@ -139,28 +139,30 @@ def call(Map config) {
                         echo "  Deploying ${appName} to CapRover"
                         echo "═══════════════════════════════════════════════════════"
 
-                        sh """
-                            set +x  # Disable command echo for security
+                        withCredentials([string(credentialsId: caproverPasswordId, variable: 'CAPROVER_PASSWORD')]) {
+                            sh """
+                                set +x  # Disable command echo for security
 
-                            echo "🚀 Starting deployment..."
+                                echo "🚀 Starting deployment..."
 
-                            caprover deploy \
-                                --host ${caproverUrl} \
-                                --password ${caproverPassword} \
-                                --branch ${gitBranch} \
-                                --appName ${appName}
+                                caprover deploy \
+                                    --host ${caproverUrl} \
+                                    --password \$CAPROVER_PASSWORD \
+                                    --branch ${gitBranch} \
+                                    --appName ${appName}
 
-                            DEPLOY_EXIT_CODE=\$?
+                                DEPLOY_EXIT_CODE=\$?
 
-                            if [ \$DEPLOY_EXIT_CODE -eq 0 ]; then
-                                echo "✅ Deployment completed successfully"
-                            else
-                                echo "❌ Deployment failed with exit code \$DEPLOY_EXIT_CODE"
-                                exit \$DEPLOY_EXIT_CODE
-                            fi
+                                if [ \$DEPLOY_EXIT_CODE -eq 0 ]; then
+                                    echo "✅ Deployment completed successfully"
+                                else
+                                    echo "❌ Deployment failed with exit code \$DEPLOY_EXIT_CODE"
+                                    exit \$DEPLOY_EXIT_CODE
+                                fi
 
-                            set -x  # Re-enable command echo
-                        """
+                                set -x  # Re-enable command echo
+                            """
+                        }
                     }
                 }
             }

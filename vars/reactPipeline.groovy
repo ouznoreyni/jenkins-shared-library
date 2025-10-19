@@ -38,15 +38,15 @@ def call(Map config) {
     def appName = config.applicationName
     def gitBranch = config.gitBranch ?: env.GIT_BRANCH ?: 'main'
     def caproverUrl = config.caproverUrl ?: env.CAPROVER_URL
-    def caproverPassword = config.caproverPassword ?: env.CAPROVER_PASSWORD
+    def caproverPasswordId = config.caproverPasswordId ?: 'caprover-password'
     def notificationEmails = config.notificationEmails ?: env.NOTIFICATION_EMAILS
     def fromEmail = config.fromEmail ?: env.FROM_EMAIL ?: 'jenkins@noreyni.com'
     def dockerImage = config.dockerImage ?: 'ouznoreyni/docker-node-alpine-22-git:latest'
     def pipelineTimeout = config.pipelineTimeout ?: 30
 
     // Validate deployment credentials
-    if (!caproverUrl || !caproverPassword) {
-        error "❌ Missing required deployment credentials: CAPROVER_URL and CAPROVER_PASSWORD must be configured"
+    if (!caproverUrl) {
+        error "❌ Missing required deployment credential: CAPROVER_URL must be configured"
     }
 
     pipeline {
@@ -117,8 +117,8 @@ Please create a captain-definition file in your repository.
                 steps {
                     echo "Preparing deployment for branch: ${gitBranch}"
                     script {
-                        if (!caproverUrl || !caproverPassword) {
-                            error "❌ Missing required deployment credentials"
+                        if (!caproverUrl) {
+                            error "❌ Missing required deployment credential: CAPROVER_URL"
                         }
                         echo "✅ Deployment credentials verified"
                     }
@@ -133,35 +133,37 @@ Please create a captain-definition file in your repository.
                         echo "  CapRover will handle the build process"
                         echo "═══════════════════════════════════════════════════════"
 
-                        sh """
-                            set +x  # Disable command echo for security
+                        withCredentials([string(credentialsId: caproverPasswordId, variable: 'CAPROVER_PASSWORD')]) {
+                            sh """
+                                set +x  # Disable command echo for security
 
-                            echo "🚀 Starting CapRover deployment..."
-                            echo "ℹ️  CapRover will:"
-                            echo "   1. Clone your repository"
-                            echo "   2. Build using your captain-definition"
-                            echo "   3. Install dependencies"
-                            echo "   4. Build React app for production"
-                            echo "   5. Create optimized Nginx Docker image"
-                            echo "   6. Deploy the container"
+                                echo "🚀 Starting CapRover deployment..."
+                                echo "ℹ️  CapRover will:"
+                                echo "   1. Clone your repository"
+                                echo "   2. Build using your captain-definition"
+                                echo "   3. Install dependencies"
+                                echo "   4. Build React app for production"
+                                echo "   5. Create optimized Nginx Docker image"
+                                echo "   6. Deploy the container"
 
-                            caprover deploy \
-                                --host ${caproverUrl} \
-                                --password ${caproverPassword} \
-                                --branch ${gitBranch} \
-                                --appName ${appName}
+                                caprover deploy \
+                                    --host ${caproverUrl} \
+                                    --password \$CAPROVER_PASSWORD \
+                                    --branch ${gitBranch} \
+                                    --appName ${appName}
 
-                            DEPLOY_EXIT_CODE=\$?
+                                DEPLOY_EXIT_CODE=\$?
 
-                            if [ \$DEPLOY_EXIT_CODE -eq 0 ]; then
-                                echo "✅ React application deployed successfully!"
-                            else
-                                echo "❌ Deployment failed with exit code \$DEPLOY_EXIT_CODE"
-                                exit \$DEPLOY_EXIT_CODE
-                            fi
+                                if [ \$DEPLOY_EXIT_CODE -eq 0 ]; then
+                                    echo "✅ React application deployed successfully!"
+                                else
+                                    echo "❌ Deployment failed with exit code \$DEPLOY_EXIT_CODE"
+                                    exit \$DEPLOY_EXIT_CODE
+                                fi
 
-                            set -x  # Re-enable command echo
-                        """
+                                set -x  # Re-enable command echo
+                            """
+                        }
                     }
                 }
             }

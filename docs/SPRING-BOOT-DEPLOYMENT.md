@@ -208,7 +208,7 @@ springBootPipeline(
 
     // CapRover Configuration
     caproverUrl: env.CAPROVER_URL,
-    caproverPassword: env.CAPROVER_PASSWORD,
+    caproverPasswordId: 'caprover-password',  // Jenkins credential ID
 
     // Git Configuration
     gitBranch: env.GIT_BRANCH,
@@ -227,7 +227,22 @@ springBootPipeline(
 
 ## Jenkins Setup
 
-### 1. Configure Jenkins Environment Variables
+### 1. Configure Jenkins Credentials for CapRover
+
+**Add CapRover Password as Jenkins Credential:**
+
+1. Go to **Jenkins → Manage Jenkins → Credentials**
+2. Click on **(global)** domain
+3. Click **Add Credentials**
+4. Configure:
+   - **Kind**: Secret text
+   - **Scope**: Global
+   - **Secret**: your-caprover-password
+   - **ID**: `caprover-password`
+   - **Description**: CapRover Password
+5. Click **Create**
+
+### 2. Configure Jenkins Environment Variables
 
 Go to **Jenkins → Manage Jenkins → Configure System → Global Properties → Environment Variables**
 
@@ -236,20 +251,10 @@ Add these variables:
 | Variable | Value | Description |
 |----------|-------|-------------|
 | `CAPROVER_URL` | `captain.yourdomain.com` | Your CapRover server URL |
-| `CAPROVER_PASSWORD` | `your-password` | CapRover password |
 | `NOTIFICATION_EMAILS` | `team@company.com` | Semicolon-separated emails |
 | `FROM_EMAIL` | `jenkins@company.com` | Email sender address |
 
-**Security Best Practice:** Use Jenkins Credentials Plugin:
-
-```groovy
-springBootPipeline(
-    applicationName: 'my-api',
-    caproverPassword: credentials('caprover-password-id')
-)
-```
-
-### 2. Create Jenkins Pipeline Job
+### 3. Create Jenkins Pipeline Job
 
 1. **New Item** → Enter name → **Pipeline** → OK
 2. Under **Pipeline**:
@@ -260,7 +265,7 @@ springBootPipeline(
    - Script Path: `Jenkinsfile`
 3. **Save**
 
-### 3. Configure Webhooks (Optional)
+### 4. Configure Webhooks (Optional)
 
 For automatic builds on push:
 
@@ -412,13 +417,17 @@ git push
 
 ### Pipeline Fails: "Missing required deployment credentials"
 
-**Problem:** Jenkins environment variables not set
+**Problem:** CapRover credentials not configured
 
 **Solution:**
-1. Go to Jenkins → Manage Jenkins → Configure System
-2. Scroll to Global Properties → Environment Variables
-3. Add `CAPROVER_URL` and `CAPROVER_PASSWORD`
-4. Save and retry build
+1. **Add CapRover Password Credential:**
+   - Jenkins → Manage Jenkins → Credentials
+   - Add new credential with ID `caprover-password`
+2. **Add Environment Variable:**
+   - Jenkins → Manage Jenkins → Configure System
+   - Global Properties → Environment Variables
+   - Add `CAPROVER_URL`
+3. Save and retry build
 
 ### Build Fails: "No such file or directory: Dockerfile"
 
