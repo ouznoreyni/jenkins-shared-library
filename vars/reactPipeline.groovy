@@ -13,19 +13,43 @@
  *   Required:
  *   - applicationName: Name of the React app in CapRover
  *
- *   Optional:
+ *   Optional - Deployment:
  *   - caproverUrl: CapRover server URL (default: env.CAPROVER_URL)
- *   - caproverPassword: CapRover password (default: env.CAPROVER_PASSWORD)
+ *   - caproverPasswordId: Jenkins credential ID for CapRover password (default: 'caprover-password')
  *   - gitBranch: Branch to deploy from (default: env.GIT_BRANCH)
- *   - notificationEmails: Email list for notifications (default: env.NOTIFICATION_EMAILS)
- *   - fromEmail: Sender email (default: env.FROM_EMAIL)
  *   - dockerImage: Docker image for pipeline agent (default: 'ouznoreyni/node-git-alpine:latest')
  *   - pipelineTimeout: Pipeline timeout in minutes (default: 30)
+ *
+ *   Optional - Docker Build & Push:
+ *   - pushDockerImage: Boolean to enable Docker build and push (default: false)
+ *   - dockerRegistry: Docker registry URL (default: 'docker.io')
+ *   - dockerRegistryCredentialId: Jenkins credential ID for Docker registry (default: 'docker-hub-credentials')
+ *   - dockerImageName: Docker image name (default: applicationName)
+ *   - dockerImageTag: Docker image tag (default: git commit hash)
+ *   - dockerfilePath: Path to Dockerfile (default: './Dockerfile')
+ *   - dockerBuildArgs: Map of build arguments (default: [:])
+ *
+ *   Optional - Notifications:
+ *   - notificationChannels: List of notification channel configs (see example below)
  *
  * Example usage in Jenkinsfile:
  *   @Library('jenkins-shared-library') _
  *   reactPipeline(
- *       applicationName: 'my-react-app'
+ *       applicationName: 'my-react-app',
+ *       pushDockerImage: true,
+ *       dockerImageName: 'myorg/my-react-app',
+ *       notificationChannels: [
+ *           [
+ *               type: 'email',
+ *               notifyEmails: 'dev@example.com;ops@example.com',
+ *               fromEmail: 'jenkins@example.com'
+ *           ],
+ *           [
+ *               type: 'slack',
+ *               channel: '#deployments',
+ *               webhook: env.SLACK_WEBHOOK_URL
+ *           ]
+ *       ]
  *   )
  */
 def call(Map config) {
@@ -34,15 +58,43 @@ def call(Map config) {
         error "❌ Missing required parameter: 'applicationName' must be specified"
     }
 
-    // Configuration
+    // Configuration - Deployment
     def appName = config.applicationName
     def gitBranch = config.gitBranch ?: env.GIT_BRANCH ?: 'main'
     def caproverUrl = config.caproverUrl ?: env.CAPROVER_URL
     def caproverPasswordId = config.caproverPasswordId ?: 'caprover-password'
-    def notificationEmails = config.notificationEmails ?: env.NOTIFICATION_EMAILS
-    def fromEmail = config.fromEmail ?: env.FROM_EMAIL ?: 'jenkins@noreyni.com'
-    def dockerImage = config.dockerImage ?: 'ouznoreyni/node-git-alpine:latest'
+    def agentDockerImage = config.dockerImage ?: 'ouznoreyni/node-git-alpine:latest'
     def pipelineTimeout = config.pipelineTimeout ?: 30
+
+    // Configuration - Docker Build & Push
+    def pushDockerImage = config.pushDockerImage ?: false
+    def dockerRegistry = config.dockerRegistry ?: 'docker.io'
+    def dockerRegistryCredentialId = config.dockerRegistryCredentialId ?: 'docker-hub-credentials'
+    def dockerImageName = config.dockerImageName ?: appName
+    def dockerImageTag = config.dockerImageTag ?: '' // Will be set to commit hash if empty
+    def dockerfilePath = config.dockerfilePath ?: './Dockerfile'
+    def dockerBuildArgs = config.dockerBuildArgs ?: [:]
+
+    // Configuration - Notifications (support both old and new format)
+    def notificationChannels = config.notificationChannels ?: []
+
+    // Backward compatibility: if old format is used, convert to new format
+    if (!notificationChannels && (config.notificationEmails || config.fromEmail)) {
+        notificationChannels << [
+            type: 'email',
+            notifyEmails: config.notificationEmails ?: env.NOTIFICATION_EMAILS,
+            fromEmail: config.fromEmail ?: env.FROM_EMAIL ?: 'jenkins@noreyni.com'
+        ]
+    }
+
+    // Add Slack if configured
+    if (!notificationChannels.find { it.type == 'slack' } && (config.slackWebhook || env.SLACK_WEBHOOK_URL)) {
+        notificationChannels << [
+            type: 'slack',
+            channel: config.slackChannel ?: '',
+            webhook: config.slackWebhook ?: env.SLACK_WEBHOOK_URL
+        ]
+    }
 
     // Validate deployment credentials
     if (!caproverUrl) {
@@ -52,8 +104,8 @@ def call(Map config) {
     pipeline {
         agent {
             docker {
-                image dockerImage
-                args '-u root:root'
+                image agentDockerImage
+                args '-u root:root -v /var/run/docker.sock:/var/run/docker.sock'
             }
         }
 
@@ -81,6 +133,138 @@ def call(Map config) {
                         sh 'node --version'
                         sh 'npm --version'
                         sh 'git --version'
+                    }
+                }
+            }
+
+            stage('📥 Checkout Source Code') {
+                steps {
+                    script {
+                        echo "📥 Checking out source code with full git history..."
+
+                        // Clean workspace first
+                        deleteDir()
+
+                        // Checkout with full git history for CapRover
+                        checkout([
+                            $class: 'GitSCM',
+                            branches: [[name: "*/${gitBranch}"]],
+                            extensions: [
+                                [$class: 'CloneOption', depth: 0, noTags: false, shallow: false],
+                                [$class: 'LocalBranch', localBranch: gitBranch]
+                            ],
+                            userRemoteConfigs: scm.userRemoteConfigs
+                        ])
+
+                        sh """
+                            # Fix git safe.directory issue when running in Docker container
+                            git config --global --add safe.directory \$(pwd)
+
+                            git branch -a
+                            git log --oneline -n 5
+                            echo "✅ Git repository ready"
+                        """
+
+                        // Store commit hash for notifications
+                        env.GIT_COMMIT_HASH = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+                        env.GIT_COMMIT_MESSAGE = sh(returnStdout: true, script: 'git log -1 --pretty=%B').trim()
+                        env.GIT_COMMIT_AUTHOR = sh(returnStdout: true, script: 'git log -1 --pretty=%an').trim()
+                    }
+                }
+            }
+
+            stage('🐳 Build Docker Image') {
+                when {
+                    expression { pushDockerImage == true }
+                }
+                steps {
+                    script {
+                        echo "═══════════════════════════════════════════════════════"
+                        echo "  Building Docker Image"
+                        echo "═══════════════════════════════════════════════════════"
+
+                        // Set image tag if not provided
+                        def imageTag = dockerImageTag ?: env.GIT_COMMIT_HASH
+                        def fullImageName = "${dockerRegistry}/${dockerImageName}:${imageTag}"
+                        def latestImageName = "${dockerRegistry}/${dockerImageName}:latest"
+
+                        // Store for later stages
+                        env.DOCKER_IMAGE_TAG = imageTag
+                        env.DOCKER_FULL_IMAGE_NAME = fullImageName
+                        env.DOCKER_LATEST_IMAGE_NAME = latestImageName
+
+                        echo "📦 Image: ${fullImageName}"
+                        echo "📦 Latest: ${latestImageName}"
+                        echo "📝 Dockerfile: ${dockerfilePath}"
+
+                        // Verify Dockerfile exists
+                        if (!fileExists(dockerfilePath)) {
+                            error "❌ Dockerfile not found at: ${dockerfilePath}"
+                        }
+
+                        // Build Docker arguments string
+                        def buildArgsString = ''
+                        dockerBuildArgs.each { key, value ->
+                            buildArgsString += " --build-arg ${key}=${value}"
+                        }
+
+                        sh """
+                            echo "🔨 Building Docker image..."
+                            docker build \\
+                                -t ${fullImageName} \\
+                                -t ${latestImageName} \\
+                                ${buildArgsString} \\
+                                -f ${dockerfilePath} \\
+                                .
+
+                            echo "✅ Docker image built successfully!"
+                            docker images | grep ${dockerImageName} | head -5
+                        """
+                    }
+                }
+            }
+
+            stage('🚀 Push Docker Image') {
+                when {
+                    expression { pushDockerImage == true }
+                }
+                steps {
+                    script {
+                        echo "═══════════════════════════════════════════════════════"
+                        echo "  Pushing Docker Image to Registry"
+                        echo "═══════════════════════════════════════════════════════"
+
+                        withCredentials([usernamePassword(
+                            credentialsId: dockerRegistryCredentialId,
+                            usernameVariable: 'DOCKER_USER',
+                            passwordVariable: 'DOCKER_PASS'
+                        )]) {
+                            sh """
+                                set +x  # Disable command echo for security
+                                echo "🔑 Logging in to Docker registry: ${dockerRegistry}"
+                                echo "\$DOCKER_PASS" | docker login ${dockerRegistry} -u "\$DOCKER_USER" --password-stdin
+
+                                echo "📤 Pushing tagged image: ${env.DOCKER_FULL_IMAGE_NAME}"
+                                docker push ${env.DOCKER_FULL_IMAGE_NAME}
+
+                                echo "📤 Pushing latest image: ${env.DOCKER_LATEST_IMAGE_NAME}"
+                                docker push ${env.DOCKER_LATEST_IMAGE_NAME}
+
+                                echo "🧹 Logging out from Docker registry"
+                                docker logout ${dockerRegistry}
+
+                                set -x  # Re-enable command echo
+                                echo "✅ Docker images pushed successfully!"
+                            """
+                        }
+
+                        echo "═══════════════════════════════════════════════════════"
+                        echo "  Docker Image Published"
+                        echo "═══════════════════════════════════════════════════════"
+                        echo "📦 Tagged: ${env.DOCKER_FULL_IMAGE_NAME}"
+                        echo "📦 Latest: ${env.DOCKER_LATEST_IMAGE_NAME}"
+                        echo "🌐 Registry: ${dockerRegistry}"
+                        echo "═══════════════════════════════════════════════════════"
                     }
                 }
             }
@@ -146,11 +330,17 @@ Please create a captain-definition file in your repository.
                                 echo "   5. Create optimized Nginx Docker image"
                                 echo "   6. Deploy the container"
 
+                                echo "🔍 Verifying git repository..."
+                                echo "📍 Current commit: \$(git rev-parse HEAD)"
+                                echo "📍 Current branch: \$(git rev-parse --abbrev-ref HEAD)"
+                                echo "📍 Remote: \$(git config --get remote.origin.url)"
+
+                                echo "🚢 Deploying to CapRover..."
                                 caprover deploy \
-                                    --host ${caproverUrl} \
-                                    --password \$CAPROVER_PASSWORD \
-                                    --branch ${gitBranch} \
-                                    --appName ${appName}
+                                    -h ${caproverUrl} \
+                                    -p \$CAPROVER_PASSWORD \
+                                    -b ${gitBranch} \
+                                    -a ${appName}
 
                                 DEPLOY_EXIT_CODE=\$?
 
@@ -189,83 +379,25 @@ Please create a captain-definition file in your repository.
                 script {
                     echo "✅ React deployment pipeline completed successfully!"
 
-                    if (notificationEmails) {
-                        def recipients = notificationEmails.split(';').collect { "<${it.trim()}>" }.join(', ')
-                        emailext (
-                            subject: "✅ SUCCESS: ${appName} React App Deployed",
-                            body: """
-                                <html>
-                                <head>
-                                    <style>
-                                        body { font-family: Arial, sans-serif; line-height: 1.6; }
-                                        .header { background: linear-gradient(135deg, #61DAFB 0%, #21A1C4 100%); color: white; padding: 30px; text-align: center; }
-                                        .content { padding: 20px; }
-                                        .info-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-                                        .info-table td { padding: 12px; border-bottom: 1px solid #ddd; }
-                                        .info-table td:first-child { font-weight: bold; width: 180px; color: #61DAFB; }
-                                        .success-box { background-color: #d1ecf1; border-left: 4px solid #61DAFB; padding: 15px; margin: 20px 0; }
-                                        .footer { margin-top: 30px; padding-top: 20px; border-top: 2px solid #61DAFB; color: #666; font-size: 12px; }
-                                    </style>
-                                </head>
-                                <body>
-                                    <div class="header">
-                                        <h1>✅ React Deployment Successful</h1>
-                                        <p>Your application is now live!</p>
-                                    </div>
-                                    <div class="content">
-                                        <div class="success-box">
-                                            <strong>🎉 Deployment completed successfully!</strong>
-                                            <p>Your React application has been built and deployed to CapRover.</p>
-                                        </div>
-                                        <table class="info-table">
-                                            <tr>
-                                                <td>📦 Application:</td>
-                                                <td><strong>${appName}</strong></td>
-                                            </tr>
-                                            <tr>
-                                                <td>⚛️ Framework:</td>
-                                                <td>React</td>
-                                            </tr>
-                                            <tr>
-                                                <td>🌿 Branch:</td>
-                                                <td><strong>${gitBranch}</strong></td>
-                                            </tr>
-                                            <tr>
-                                                <td>🔗 CapRover Server:</td>
-                                                <td>${caproverUrl}</td>
-                                            </tr>
-                                            <tr>
-                                                <td>🌐 Application URL:</td>
-                                                <td><a href="https://${appName}.${caproverUrl}">https://${appName}.${caproverUrl}</a></td>
-                                            </tr>
-                                            <tr>
-                                                <td>🏗️ Build Number:</td>
-                                                <td>#${BUILD_NUMBER}</td>
-                                            </tr>
-                                            <tr>
-                                                <td>🔗 Build URL:</td>
-                                                <td><a href="${BUILD_URL}">${BUILD_URL}</a></td>
-                                            </tr>
-                                            <tr>
-                                                <td>⏰ Completed At:</td>
-                                                <td>${new Date()}</td>
-                                            </tr>
-                                        </table>
-                                        <div class="footer">
-                                            <p>🤖 This is an automated notification from Jenkins CI/CD Pipeline</p>
-                                            <p>ℹ️  Build was performed by CapRover using your captain-definition</p>
-                                        </div>
-                                    </div>
-                                </body>
-                                </html>
-                            """,
-                            mimeType: 'text/html',
-                            replyTo: fromEmail,
-                            to: recipients,
-                            attachLog: true,
-                            from: fromEmail
-                        )
+                    // Build additional info with Docker image details
+                    def additionalInfo = ""
+                    if (pushDockerImage && env.DOCKER_FULL_IMAGE_NAME) {
+                        additionalInfo = "Docker Image: ${env.DOCKER_FULL_IMAGE_NAME}"
                     }
+
+                    // Send notifications to all configured channels
+                    sendNotification(
+                        status: 'success',
+                        serviceAppName: appName,
+                        notificationChannels: notificationChannels,
+                        gitBranch: gitBranch,
+                        caproverUrl: caproverUrl,
+                        deploymentType: 'React',
+                        commitHash: env.GIT_COMMIT_HASH ?: '',
+                        commitMessage: env.GIT_COMMIT_MESSAGE ?: '',
+                        author: env.GIT_COMMIT_AUTHOR ?: '',
+                        additionalInfo: additionalInfo
+                    )
                 }
             }
 
@@ -273,98 +405,37 @@ Please create a captain-definition file in your repository.
                 script {
                     echo "❌ React deployment pipeline failed!"
 
-                    if (notificationEmails) {
-                        def recipients = notificationEmails.split(';').collect { "<${it.trim()}>" }.join(', ')
-                        emailext (
-                            subject: "❌ FAILED: ${appName} React Deployment",
-                            body: """
-                                <html>
-                                <head>
-                                    <style>
-                                        body { font-family: Arial, sans-serif; line-height: 1.6; }
-                                        .header { background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); color: white; padding: 30px; text-align: center; }
-                                        .content { padding: 20px; }
-                                        .info-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-                                        .info-table td { padding: 12px; border-bottom: 1px solid #ddd; }
-                                        .info-table td:first-child { font-weight: bold; width: 180px; color: #dc3545; }
-                                        .error-box { background-color: #f8d7da; border-left: 4px solid #dc3545; padding: 15px; margin: 20px 0; }
-                                        .footer { margin-top: 30px; padding-top: 20px; border-top: 2px solid #dc3545; color: #666; font-size: 12px; }
-                                    </style>
-                                </head>
-                                <body>
-                                    <div class="header">
-                                        <h1>❌ React Deployment Failed</h1>
-                                        <p>Action required</p>
-                                    </div>
-                                    <div class="content">
-                                        <div class="error-box">
-                                            <strong>⚠️ Deployment Failed</strong>
-                                            <p>The React application deployment to CapRover has failed. Please review the logs and take corrective action.</p>
-                                        </div>
-                                        <table class="info-table">
-                                            <tr>
-                                                <td>📦 Application:</td>
-                                                <td><strong>${appName}</strong></td>
-                                            </tr>
-                                            <tr>
-                                                <td>⚛️ Framework:</td>
-                                                <td>React</td>
-                                            </tr>
-                                            <tr>
-                                                <td>🌿 Branch:</td>
-                                                <td><strong>${gitBranch}</strong></td>
-                                            </tr>
-                                            <tr>
-                                                <td>🔗 CapRover Server:</td>
-                                                <td>${caproverUrl}</td>
-                                            </tr>
-                                            <tr>
-                                                <td>🏗️ Build Number:</td>
-                                                <td>#${BUILD_NUMBER}</td>
-                                            </tr>
-                                            <tr>
-                                                <td>🔗 Build URL:</td>
-                                                <td><a href="${BUILD_URL}">${BUILD_URL}</a></td>
-                                            </tr>
-                                            <tr>
-                                                <td>❌ Failed At:</td>
-                                                <td>${new Date()}</td>
-                                            </tr>
-                                        </table>
-                                        <div class="error-box">
-                                            <p><strong>🔧 Troubleshooting Steps:</strong></p>
-                                            <ol>
-                                                <li>Check the attached Jenkins build log for errors</li>
-                                                <li>Review CapRover deployment logs in the dashboard</li>
-                                                <li>Verify captain-definition is properly configured</li>
-                                                <li>Ensure package.json is correct</li>
-                                                <li>Check that nginx.conf exists and is valid</li>
-                                                <li>Verify all dependencies are available</li>
-                                                <li>Test the Docker build locally</li>
-                                                <li>Ensure CapRover has sufficient resources</li>
-                                            </ol>
-                                        </div>
-                                        <div class="footer">
-                                            <p>🤖 This is an automated notification from Jenkins CI/CD Pipeline</p>
-                                        </div>
-                                    </div>
-                                </body>
-                                </html>
-                            """,
-                            mimeType: 'text/html',
-                            replyTo: fromEmail,
-                            to: recipients,
-                            attachLog: true,
-                            compressLog: true,
-                            from: fromEmail
-                        )
-                    }
+                    // Send notifications to all configured channels
+                    sendNotification(
+                        status: 'failure',
+                        serviceAppName: appName,
+                        notificationChannels: notificationChannels,
+                        gitBranch: gitBranch,
+                        caproverUrl: caproverUrl,
+                        deploymentType: 'React',
+                        commitHash: env.GIT_COMMIT_HASH ?: '',
+                        commitMessage: env.GIT_COMMIT_MESSAGE ?: '',
+                        author: env.GIT_COMMIT_AUTHOR ?: ''
+                    )
                 }
             }
 
             always {
                 script {
                     echo "🧹 Cleaning up workspace..."
+
+                    // Clean up Docker images if built
+                    if (pushDockerImage && env.DOCKER_FULL_IMAGE_NAME) {
+                        try {
+                            sh """
+                                echo "🧹 Cleaning up Docker images..."
+                                docker rmi ${env.DOCKER_FULL_IMAGE_NAME} || true
+                                docker rmi ${env.DOCKER_LATEST_IMAGE_NAME} || true
+                            """
+                        } catch (Exception e) {
+                            echo "⚠️  Failed to clean up Docker images: ${e.message}"
+                        }
+                    }
                 }
                 cleanWs()
             }
